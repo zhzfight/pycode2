@@ -8,12 +8,14 @@ import math
 from progress.bar import Bar
 
 train_frac = 0.9
-delta_t = 25 * 24 *3600
+delta_t = 0.25 * 24 *3600
 d = 100
 k = 5
 checkin_data_path = 'checkin_CA_venues.txt'
+fs_data_path = 'fs_friendship_CA.txt'
 
 checkin_data = pd.read_csv('./'+checkin_data_path,header=0,sep='\t')
+fs_data = pd.read_csv('./'+fs_data_path,header=0,sep=',')
 train_data = checkin_data.sample(frac=train_frac, random_state=0, axis=0)
 test_data = checkin_data[~checkin_data.index.isin(train_data.index)]
 
@@ -70,6 +72,14 @@ def pois_gen():
         str_out += get_strline_out([poiID])
     write_in_file('./POIs.txt',str_out)
 
+def users_gen():
+    print('users_gen')
+    users = train_data['userID'].drop_duplicates()
+    str_out = ''
+    for index, userID in users.iteritems():
+        str_out += get_strline_out([userID])
+    write_in_file('./Users.txt',str_out)
+
 def poi_poi_gen():
     print('poi_poi_gen')
     userIDs = train_data['userID'].drop_duplicates()
@@ -81,6 +91,7 @@ def poi_poi_gen():
         for index, row in databyid.iterrows():
             data_list.append((row['VenueId'],get_timestamp(row['Time(GMT)'])))
         for index,(poiID,timestamp) in enumerate(data_list):
+            # the CA dataset have been sorted by timestamp in reverse order
             for (poiID_,timestamp_) in data_list[index+1:]:
                 if timestamp > timestamp_ and timestamp - timestamp_ < delta_t:
                     if poiID_ not in poi_poi_dict:
@@ -157,7 +168,115 @@ def poi_word_gen():
         for word, tf in poi_word_tf_dict[poiID].items():
             str_out += get_strline_out([poiID,word,tf*math.log(length/(word_numinpoi_dict[word]+1))])
     write_in_file('./net_POI_word.txt',str_out)
-            
+
+
+def user_poi_gen():
+    print('user_poi_gen')
+    user_poi_dict={}
+    for index,row in train_data.iterrows():
+        userID=row['userID']
+        poi = row['VenueId']
+        if userID not in user_poi_dict:
+            user_poi_dict[userID]={poi:1}
+        else:
+            if poi not in user_poi_dict[userID]:
+                user_poi_dict[userID][poi]=1
+            else:
+                user_poi_dict[userID][poi]+=1
+    str_out = ''
+    for userID, value in user_poi_dict.items():
+        for poi, weight in value.items():
+            str_out += get_strline_out([userID, poi, weight])
+    write_in_file('./net_user_poi.txt', str_out)
+def user_user_gen():
+    print('user_user_gen')
+    user_user_dict={}
+    users=set(train_data['userID'].drop_duplicates().tolist())
+    for index, row in fs_data.iterrows():
+        userID = row['userID']
+        if userID not in users:
+            continue
+        friendID = row['friendID']
+        if friendID not in users:
+            continue
+        if userID not in user_user_dict:
+            user_user_dict[userID]=[friendID]
+        else:
+            if friendID not in user_user_dict[userID]:
+                user_user_dict[userID].append(friendID)
+            else:
+                print('user_user_gen错误(userID,friendID)', userID,friendID)
+    str_out = ''
+    for userID,values in user_user_dict.items():
+        for friendID in values:
+            str_out+=get_strline_out([userID,friendID,1])
+    write_in_file('./net_user.txt', str_out)
+def user_word_gen():
+    print('user_word_gen')
+    user_word_tf_dict = {}
+    word_user_idf_dict={}
+    users=train_data['userID'].drop_duplicates()
+    length=len(users)
+    for userID in users:
+        data=train_data[train_data['userID']==userID].drop_duplicates(subset=['userID', 'VenueId'])
+        user_words=data['VenueCategory'].tolist()
+        for words in user_words:
+            ws=get_words(words)
+            for w in ws:
+                if userID not in user_word_tf_dict:
+                    user_word_tf_dict[userID]={w:1}
+                else:
+                    if w not in user_word_tf_dict[userID]:
+                        user_word_tf_dict[userID][w]=1
+                    else:
+                        user_word_tf_dict[userID][w]+=1
+                if w not in word_user_idf_dict:
+                    word_user_idf_dict[w]={userID}
+                else:
+                    word_user_idf_dict[w].add(userID)
+    str_out = ''
+    for userID, value in user_word_tf_dict.items():
+        total=sum(user_word_tf_dict[userID].values())
+        for word, tf in user_word_tf_dict[userID].items():
+            str_out += get_strline_out([userID, word, (tf/total) * math.log(length / (len(word_user_idf_dict[word]) + 1))])
+    write_in_file('./net_user_word.txt', str_out)
+def user_time_gen():
+    print('user_time_gen')
+    user_time_dict = {}
+    for index, row in train_data.iterrows():
+        userID = row['userID']
+        time_slot = get_time_slot(row['Time(GMT)'])
+        if userID not in user_time_dict:
+            user_time_dict[userID] = {time_slot: 1}
+        else:
+            if time_slot not in user_time_dict[userID]:
+                user_time_dict[userID][time_slot] = 1
+            else:
+                user_time_dict[userID][time_slot] += 1
+    str_out = ''
+    for userID, value in user_time_dict.items():
+        for time_slot, weight in value.items():
+            str_out += get_strline_out([userID, time_slot, weight])
+    write_in_file('./net_user_time.txt', str_out)
+
+def user_reg_gen():
+    print('user_reg_gen')
+    user_reg_dict = {}
+    for index, row in train_data.iterrows():
+        userID = row['userID']
+        region = get_region(row['VenueLocation'])
+        if userID not in user_reg_dict:
+            user_reg_dict[userID] = {region:1}
+        else:
+            if region not in user_reg_dict[userID]:
+                user_reg_dict[userID][region]=1
+            else:
+                user_reg_dict[userID][region]+=1
+    str_out = ''
+    for userID, value in user_reg_dict.items():
+        for region,weight in value.items():
+            str_out+=get_strline_out([userID,region,weight])
+    write_in_file('./net_user_reg.txt', str_out)
             
 def train_data_gen():
     print('train_data_gen')
@@ -168,11 +287,16 @@ def test_data_gen():
     print('test_data_gen')
     test_data.to_csv('./test_data.txt',sep='\t',header=False)
     # to_csv index=0 不保存行索引
-    
+
+
+
+
 if __name__ == '__main__':
     print('checkin数据为:',checkin_data_path)
     print('训练集占比:',train_frac)
-    print('时间间隔:',str(int(delta_t/24/3600)),'天')
+    print('时间间隔:',delta_t,'second')
+    print(train_data.dtypes)
+    print(fs_data.dtypes)
     train_data_gen()
     test_data_gen()
     pois_gen()
@@ -180,5 +304,11 @@ if __name__ == '__main__':
     poi_time_gen()
     poi_reg_gen()
     poi_word_gen()
+    users_gen()
+    user_user_gen()
+    user_time_gen()
+    user_reg_gen()
+    user_word_gen()
+    user_poi_gen()
     
     # os.system('./GEmodel -size '+str(d)+' -order 2 -negative '+str(k)+' -rho 0.025 -threads 2')
