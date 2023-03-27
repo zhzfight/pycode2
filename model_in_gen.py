@@ -8,7 +8,7 @@ import math
 from progress.bar import Bar
 
 train_frac = 0.9
-delta_t = 0.25 * 24 *3600
+delta_t = 25 * 24 *3600
 d = 100
 k = 5
 checkin_data_path = 'checkin_CA_venues.txt'

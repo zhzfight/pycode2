@@ -711,6 +711,7 @@ void Update(real *vec_u, real *vec_v, real *vec_error, int label,int a) {
     for (int c = 0; c != dim; c++) x += vec_u[c] * vec_v[c];
     if (isnan(x)) {
         std::cout << "错了 "<<a<<" " <<x<< std::endl;
+
     }
     g = (label - FastSigmoid(x)) * rho;
     for (int c = 0; c != dim; c++) vec_error[c] += g * vec_v[c];
