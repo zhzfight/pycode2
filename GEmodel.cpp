@@ -3,7 +3,9 @@
 #include <string.h>
 #include <math.h>
 #include <assert.h>
+#include <random>
 #include <exception>
+#include <algorithm>
 // #include <boost/thread.hpp>
 #include <thread>
 #include <boost/random/linear_congruential.hpp>
@@ -44,13 +46,13 @@ struct ClassVertex *vertex_poi;
 struct ClassVertex *vertex_pv;
 struct ClassVertex *vertex_pr;
 struct ClassVertex *vertex_pt;
-struct ClassVertex *vertex_pw;
 
 struct ClassVertex *vertex_user;
 struct ClassVertex *vertex_uv;
+
+//the index in ur,ut,up should keep align with pr,pt,pv
 struct ClassVertex *vertex_ur;
 struct ClassVertex *vertex_ut;
-struct ClassVertex *vertex_uw;
 struct ClassVertex *vertex_up;
 
 
@@ -58,7 +60,7 @@ int is_binary = 0, num_threads = 2, dim = 20, num_negative = 5;
 
 int *pvertex_hash_table, *pword_hash_table, *pregion_hash_table, *ptime_hash_table, *neg_table_pv, *neg_table_pr, *neg_table_pt, *neg_table_pw;
 
-int *uvertex_hash_table, *uword_hash_table, *uregion_hash_table, *utime_hash_table, *upoi_hash_table, *neg_table_uv, *neg_table_ur, *neg_table_ut, *neg_table_uw, *neg_table_up;
+int *uvertex_hash_table, *neg_table_uv, *neg_table_ur, *neg_table_ut, *neg_table_uw, *neg_table_up;
 
 int max_num_vertices = 1000, num_vertices_poi = 0, num_vertices_pv = 0, num_vertices_pr = 0, num_vertices_pt = 0, num_vertices_pw = 0;
 
@@ -68,28 +70,29 @@ long long total_samples = 100, current_sample_count = 0, num_edges_pv = 0, num_e
 
 long long num_edges_uv = 0, num_edges_ur = 0, num_edges_ut = 0, num_edges_uw = 0, num_edges_up = 0;
 
+
 real init_rho = 0.025, rho;
 real *emb_vertex_p, *emb_vertex_r, *emb_vertex_t, *emb_vertex_w, *sigmoid_table;
 
 real *emb_vertex_u;
 
-int *pv_edge_source_id, *pv_edge_target_id, *pr_edge_source_id, *pr_edge_target_id, *pt_edge_source_id, *pt_edge_target_id, *pw_edge_source_id, *pw_edge_target_id;
+int *pv_edge_source_id, *pv_edge_target_id, *pr_edge_source_id, *pr_edge_target_id, *pt_edge_source_id, *pt_edge_target_id;
 double *pv_edge_weight, *pr_edge_weight, *pt_edge_weight, *pw_edge_weight;
 
-int *uv_edge_source_id, *uv_edge_target_id, *ur_edge_source_id, *ur_edge_target_id, *ut_edge_source_id, *ut_edge_target_id, *uw_edge_source_id, *uw_edge_target_id, *up_edge_source_id, *up_edge_target_id;
+int *uv_edge_source_id, *uv_edge_target_id, *ur_edge_source_id, *ur_edge_target_id, *ut_edge_source_id, *ut_edge_target_id, *up_edge_source_id, *up_edge_target_id;
 double *uv_edge_weight, *ur_edge_weight, *ut_edge_weight, *uw_edge_weight, *up_edge_weight;
 
 // Parameters for edge sampling
-long long *alias_pv, *alias_pr, *alias_pt, *alias_pw;
-double *prob_pv, *prob_pr, *prob_pt, *prob_pw;
+long long *alias_pv, *alias_pr, *alias_pt;
+double *prob_pv, *prob_pr, *prob_pt;
 
 // Parameters for edge sampling
-long long *alias_uv, *alias_ur, *alias_ut, *alias_uw, *alias_up;
-double *prob_uv, *prob_ur, *prob_ut, *prob_uw, *prob_up;
+long long *alias_uv, *alias_ur, *alias_ut, *alias_up;
+double *prob_uv, *prob_ur, *prob_ut, *prob_up;
 
 //random generator
 typedef boost::minstd_rand base_generator_type;
-base_generator_type generator(42u);
+base_generator_type generator(33u);
 boost::uniform_real<> uni_dist(0, 1);
 boost::variate_generator<base_generator_type &, boost::uniform_real<> > uni(generator, uni_dist);
 
@@ -114,26 +117,15 @@ void InitHashTable() {
     ptime_hash_table = (int *) malloc(hash_table_size * sizeof(int));
     for (int k = 0; k != hash_table_size; k++) ptime_hash_table[k] = -1;
 
-    pword_hash_table = (int *) malloc(hash_table_size * sizeof(int));
-    for (int k = 0; k != hash_table_size; k++) pword_hash_table[k] = -1;
 
     uvertex_hash_table = (int *) malloc(hash_table_size * sizeof(int));
     for (int k = 0; k != hash_table_size; k++) uvertex_hash_table[k] = -1;
 
-    uregion_hash_table = (int *) malloc(hash_table_size * sizeof(int));
-    for (int k = 0; k != hash_table_size; k++) uregion_hash_table[k] = -1;
-
-    utime_hash_table = (int *) malloc(hash_table_size * sizeof(int));
-    for (int k = 0; k != hash_table_size; k++) utime_hash_table[k] = -1;
-
-    uword_hash_table = (int *) malloc(hash_table_size * sizeof(int));
-    for (int k = 0; k != hash_table_size; k++) uword_hash_table[k] = -1;
-
-    upoi_hash_table = (int *) malloc(hash_table_size * sizeof(int));
-    for (int k = 0; k != hash_table_size; k++) upoi_hash_table[k] = -1;
 }
 
 void InsertHashTable(char *key, int value, int flag) {
+    //pv pr pt 00 00 00 uv
+    //0   1  2           6
     int addr = Hash(key);
     if (flag == 0) {
         while (pvertex_hash_table[addr] != -1) {
@@ -141,50 +133,26 @@ void InsertHashTable(char *key, int value, int flag) {
         }
         pvertex_hash_table[addr] = value;
     } else if (flag == 1) {
-        while (pword_hash_table[addr] != -1) {
-            addr = (addr + 1) % hash_table_size;
-        }
-        pword_hash_table[addr] = value;
-    } else if (flag == 2) {
         while (pregion_hash_table[addr] != -1) {
             addr = (addr + 1) % hash_table_size;
         }
         pregion_hash_table[addr] = value;
-    } else if (flag == 3) {
+    } else if (flag == 2) {
         while (ptime_hash_table[addr] != -1) {
             addr = (addr + 1) % hash_table_size;
         }
         ptime_hash_table[addr] = value;
-    } else if (flag == 4) {
+    } else if (flag == 6) {
         while (uvertex_hash_table[addr] != -1) {
             addr = (addr + 1) % hash_table_size;
         }
         uvertex_hash_table[addr] = value;
         //printf("insert into uvertex_hash_table key:%s$ value:%d$ %d\n",key,value,addr);
-    } else if (flag == 5) {
-        while (uword_hash_table[addr] != -1) {
-            addr = (addr + 1) % hash_table_size;
-        }
-        uword_hash_table[addr] = value;
-    } else if (flag == 6) {
-        while (uregion_hash_table[addr] != -1) {
-            addr = (addr + 1) % hash_table_size;
-        }
-        uregion_hash_table[addr] = value;
-    } else if (flag == 7) {
-        while (utime_hash_table[addr] != -1) {
-            addr = (addr + 1) % hash_table_size;
-        }
-        utime_hash_table[addr] = value;
-    } else {
-        while (upoi_hash_table[addr] != -1) {
-            addr = (addr + 1) % hash_table_size;
-        }
-        upoi_hash_table[addr] = value;
     }
 }
 
 int SearchHashTable(char *key, ClassVertex *vertex, int flag) {
+    //pv pr pt up ur ut up
     int addr = Hash(key);
     //std::cout<<key<<"\n";
     if (flag == 0) {
@@ -195,24 +163,17 @@ int SearchHashTable(char *key, ClassVertex *vertex, int flag) {
         }
     } else if (flag == 1) {
         while (1) {
-            if (pword_hash_table[addr] == -1) return -1;
-            if (!strcmp(key, vertex[pword_hash_table[addr]].name)) return pword_hash_table[addr];
-            addr = (addr + 1) % hash_table_size;
-        }
-    } else if (flag == 2) {
-        while (1) {
             if (pregion_hash_table[addr] == -1) return -1;
             if (!strcmp(key, vertex[pregion_hash_table[addr]].name)) return pregion_hash_table[addr];
             addr = (addr + 1) % hash_table_size;
         }
-    } else if (flag == 3) {
+    } else if (flag == 2) {
         while (1) {
             if (ptime_hash_table[addr] == -1) return -1;
             if (!strcmp(key, vertex[ptime_hash_table[addr]].name)) return ptime_hash_table[addr];
             addr = (addr + 1) % hash_table_size;
         }
-    }
-    if (flag == 4) {
+    } else if (flag == 6) {
         while (1) {
             if (uvertex_hash_table[addr] == -1) {
                 //printf("%dsearch hash table -1 key:%s& addr:%d&\n",flag,key,addr);
@@ -220,30 +181,6 @@ int SearchHashTable(char *key, ClassVertex *vertex, int flag) {
             }
             if (!strcmp(key, vertex[uvertex_hash_table[addr]].name)) return uvertex_hash_table[addr];
             //printf("%dsearch key:%s& value:%d$ vertex:%s&",flag,key,uvertex_hash_table[addr],vertex[uvertex_hash_table[addr]].name);
-            addr = (addr + 1) % hash_table_size;
-        }
-    } else if (flag == 5) {
-        while (1) {
-            if (uword_hash_table[addr] == -1) return -1;
-            if (!strcmp(key, vertex[uword_hash_table[addr]].name)) return uword_hash_table[addr];
-            addr = (addr + 1) % hash_table_size;
-        }
-    } else if (flag == 6) {
-        while (1) {
-            if (uregion_hash_table[addr] == -1) return -1;
-            if (!strcmp(key, vertex[uregion_hash_table[addr]].name)) return uregion_hash_table[addr];
-            addr = (addr + 1) % hash_table_size;
-        }
-    } else if (flag == 7) {
-        while (1) {
-            if (utime_hash_table[addr] == -1) return -1;
-            if (!strcmp(key, vertex[utime_hash_table[addr]].name)) return utime_hash_table[addr];
-            addr = (addr + 1) % hash_table_size;
-        }
-    } else {
-        while (1) {
-            if (upoi_hash_table[addr] == -1) return -1;
-            if (!strcmp(key, vertex[upoi_hash_table[addr]].name)) return upoi_hash_table[addr];
             addr = (addr + 1) % hash_table_size;
         }
     }
@@ -273,6 +210,7 @@ int AddVertex(char *name, ClassVertex *&vertex, int &num_vertices, int flag) {
 void ReadFile(char *network_file, long long &num_edges, int &num_vertices,
               int *&edge_source_id, int *&edge_target_id, double *&edge_weight, ClassVertex *&vertex,
               int flag) {
+    // pv,pr,pt,up,ur,ut,uv
     FILE *fin;
     char name_v1[MAX_STRING], name_v2[MAX_STRING], str[2 * MAX_STRING + 10000];
     int vid;
@@ -311,28 +249,62 @@ void ReadFile(char *network_file, long long &num_edges, int &num_vertices,
             if (vertex[vid].degree == 0) { num_vertices++; }
             vertex[vid].degree += weight;
             edge_source_id[k] = vid;
-        } else if (flag == 4) {
-            vid = SearchHashTable(name_v1, vertex, 4);
+        } else if (flag == 6) {
+            vid = SearchHashTable(name_v1, vertex, 6);
             if (vid == -1) {
                 printf("Error: user false point type! %d name %s\n", k, name_v1);
             }
             if (vertex[vid].degree == 0) { num_vertices++; }
             vertex[vid].degree += weight;
             edge_source_id[k] = vid;
-        } else if (flag < 4) {
+        } else if (flag < 3) {
             vid = SearchHashTable(name_v1, vertex_poi, 0);
             edge_source_id[k] = vid;
         } else {
-            vid = SearchHashTable(name_v1, vertex_user, 4);
+            vid = SearchHashTable(name_v1, vertex_user, 6);
             edge_source_id[k] = vid;
         }
 
 
-        vid = SearchHashTable(name_v2, vertex, flag);
-        if (vid == -1) {
-            vid = AddVertex(name_v2, vertex, num_vertices, flag);
+
+        if (flag == 3) {
+            vid = SearchHashTable(name_v2, vertex_pv, 0);
+            if (vid == -1) {
+                printf("cannot find %d %s\n", flag, name_v2);
+                exit(0);
+            }
+
+            int length = strlen(name_v2) + 1;
+            vertex[vid].name = (char *) calloc(length, sizeof(char));
+            strcpy(vertex[vid].name, name_v2);
+
+        } else if (flag == 4) {
+            vid = SearchHashTable(name_v2, vertex_pr, 1);
+            if (vid == -1) {
+                printf("cannot find %d %s\n", flag, name_v2);
+                exit(0);
+            }
+            int length = strlen(name_v2) + 1;
+            vertex[vid].name = (char *) calloc(length, sizeof(char));
+            strcpy(vertex[vid].name, name_v2);
+        } else if (flag == 5) {
+            vid = SearchHashTable(name_v2, vertex_pt, 2);
+            if (vid == -1) {
+                printf("cannot find %d %s\n", flag, name_v2);
+                exit(0);
+            }
+            int length = strlen(name_v2) + 1;
+            vertex[vid].name = (char *) calloc(length, sizeof(char));
+            strcpy(vertex[vid].name, name_v2);
+        } else {
+            vid = SearchHashTable(name_v2, vertex, flag);
+            if(vid==-1){
+                vid = AddVertex(name_v2, vertex, num_vertices, flag);
+            }
         }
-        if ((flag == 0||flag==4) && vertex[vid].degree == 0) { num_vertices++; }
+
+
+        if ((flag == 0 || flag == 6) && vertex[vid].degree == 0) { num_vertices++; }
         vertex[vid].degree += weight;
         edge_target_id[k] = vid;
 
@@ -386,9 +358,9 @@ void ReadUsers(char *USER_file) {
     fin = fopen(USER_file, "rb");
     for (int k = 0; k != num_user; k++) {
         fscanf(fin, "%s", name);
-        vid = SearchHashTable(name, vertex_user, 4);
+        vid = SearchHashTable(name, vertex_user, 6);
         if (vid == -1) {
-            vid = AddVertex(name, vertex_user, num_vertices_user, 4);
+            vid = AddVertex(name, vertex_user, num_vertices_user, 6);
         }
     }
 
@@ -430,12 +402,15 @@ void ReadData() {
         //printf("inuv:%d$ name:%s@ %s*\n",i,vertex_uv[i].name,name);
         vertex_uv[i].degree = 0;
     }
-    ReadFile(net_poi, num_edges_pv, num_vertices_pv, pv_edge_source_id, pv_edge_target_id, pv_edge_weight, vertex_pv, 0);
+    max_num_vertices = 1000;
+    ReadFile(net_poi, num_edges_pv, num_vertices_pv, pv_edge_source_id, pv_edge_target_id, pv_edge_weight, vertex_pv,
+             0);
     std::cout << "Number of edges in net_POI:" << "\t";
     std::cout << num_edges_pv << "\n";
     std::cout << "Number of vertices of pvs:" << "\t";
     std::cout << num_vertices_pv << "\n";
 
+    /*
     max_num_vertices = 1000;
     ReadFile(net_poi_word, num_edges_pw, num_vertices_pw, pw_edge_source_id, pw_edge_target_id, pw_edge_weight,
              vertex_pw, 1);
@@ -443,10 +418,11 @@ void ReadData() {
     std::cout << num_edges_pw << "\n";
     std::cout << "Number of vertices of pwords:" << "\t";
     std::cout << num_vertices_pw << "\n";
+     */
 
     max_num_vertices = 1000;
     ReadFile(net_poi_reg, num_edges_pr, num_vertices_pr, pr_edge_source_id, pr_edge_target_id, pr_edge_weight,
-             vertex_pr, 2);
+             vertex_pr, 1);
     std::cout << "Number of edges in net_POI_reg:" << "\t";
     std::cout << num_edges_pr << "\n";
     std::cout << "Number of vertices of pregions:" << "\t";
@@ -454,21 +430,25 @@ void ReadData() {
 
     max_num_vertices = 1000;
     ReadFile(net_poi_time, num_edges_pt, num_vertices_pt, pt_edge_source_id, pt_edge_target_id, pt_edge_weight,
-             vertex_pt, 3);
+             vertex_pt, 2);
     std::cout << "Number of edges in net_POI_time:" << "\t";
     std::cout << num_edges_pt << "\n";
     std::cout << "Number of vertices of ptime slots:" << "\t";
     std::cout << num_vertices_pt << "\n";
 
+    vertex_ur = (struct ClassVertex *) calloc(num_vertices_pr, sizeof(struct ClassVertex));
+    vertex_ut = (struct ClassVertex *) calloc(num_vertices_pt, sizeof(struct ClassVertex));
+    vertex_up = (struct ClassVertex *) calloc(num_vertices_pv, sizeof(struct ClassVertex));
 
-    ReadFile(net_user, num_edges_uv, num_vertices_uv, uv_edge_source_id, uv_edge_target_id, uv_edge_weight, vertex_uv,
-             4);
-    std::cout << "Number of edges in net_user:" << "\t";
-    std::cout << num_edges_uv << "\n";
-    std::cout << "Number of vertices of uvs:" << "\t";
-    std::cout << num_vertices_uv << "\n";
+    max_num_vertices = 1000;
+    ReadFile(net_user_poi, num_edges_up, num_vertices_up, up_edge_source_id, up_edge_target_id, up_edge_weight,
+             vertex_up, 3);
+    std::cout << "Number of edges in net_user_poi:" << "\t";
+    std::cout << num_edges_up << "\n";
+    std::cout << "Number of vertices of upois:" << "\t";
+    std::cout << num_vertices_up << "\n";
 
-
+/*
     max_num_vertices = 1000;
     ReadFile(net_user_word, num_edges_uw, num_vertices_uw, uw_edge_source_id, uw_edge_target_id, uw_edge_weight,
              vertex_uw, 5);
@@ -476,10 +456,11 @@ void ReadData() {
     std::cout << num_edges_uw << "\n";
     std::cout << "Number of vertices of uwords:" << "\t";
     std::cout << num_vertices_uw << "\n";
+    */
 
     max_num_vertices = 1000;
     ReadFile(net_user_reg, num_edges_ur, num_vertices_ur, ur_edge_source_id, ur_edge_target_id, ur_edge_weight,
-             vertex_ur, 6);
+             vertex_ur, 4);
     std::cout << "Number of edges in net_user_reg:" << "\t";
     std::cout << num_edges_ur << "\n";
     std::cout << "Number of vertices of uregions:" << "\t";
@@ -487,19 +468,19 @@ void ReadData() {
 
     max_num_vertices = 1000;
     ReadFile(net_user_time, num_edges_ut, num_vertices_ut, ut_edge_source_id, ut_edge_target_id, ut_edge_weight,
-             vertex_ut, 7);
+             vertex_ut, 5);
     std::cout << "Number of edges in net_user_time:" << "\t";
     std::cout << num_edges_ut << "\n";
     std::cout << "Number of vertices of utime slots:" << "\t";
     std::cout << num_vertices_ut << "\n";
 
     max_num_vertices = 1000;
-    ReadFile(net_user_poi, num_edges_up, num_vertices_up, up_edge_source_id, up_edge_target_id, up_edge_weight,
-             vertex_up, 8);
-    std::cout << "Number of edges in net_user_poi:" << "\t";
-    std::cout << num_edges_up << "\n";
-    std::cout << "Number of vertices of upois:" << "\t";
-    std::cout << num_vertices_up << "\n";
+    ReadFile(net_user, num_edges_uv, num_vertices_uv, uv_edge_source_id, uv_edge_target_id, uv_edge_weight, vertex_uv,
+             6);
+    std::cout << "Number of edges in net_user:" << "\t";
+    std::cout << num_edges_uv << "\n";
+    std::cout << "Number of vertices of uvs:" << "\t";
+    std::cout << num_vertices_uv << "\n";
 
 
     free(pvertex_hash_table);
@@ -508,10 +489,7 @@ void ReadData() {
     free(ptime_hash_table);
 
     free(uvertex_hash_table);
-    free(uword_hash_table);
-    free(uregion_hash_table);
-    free(utime_hash_table);
-    free(upoi_hash_table);
+
 }
 
 /* The alias sampling algorithm, which is used to sample an edge in O(1) time. */
@@ -569,12 +547,9 @@ void InitAlias() {
     InitAliasTable(alias_pv, prob_pv, num_edges_pv, pv_edge_weight);
     InitAliasTable(alias_pr, prob_pr, num_edges_pr, pr_edge_weight);
     InitAliasTable(alias_pt, prob_pt, num_edges_pt, pt_edge_weight);
-    InitAliasTable(alias_pw, prob_pw, num_edges_pw, pw_edge_weight);
-
     InitAliasTable(alias_uv, prob_uv, num_edges_uv, uv_edge_weight);
     InitAliasTable(alias_ur, prob_ur, num_edges_ur, ur_edge_weight);
     InitAliasTable(alias_ut, prob_ut, num_edges_ut, ut_edge_weight);
-    InitAliasTable(alias_uw, prob_uw, num_edges_uw, uw_edge_weight);
     InitAliasTable(alias_up, prob_up, num_edges_up, up_edge_weight);
 
 }
@@ -609,10 +584,8 @@ void InitVector() {
         for (a = 0; a < num_vertices_user; a++)
             emb_vertex_u[a * dim + b] = (rand() / (real) RAND_MAX - 0.5) / dim;
 
-    printf("%d %d %d %d %d %d\n", num_vertices_pr, num_vertices_ur, num_vertices_pw, num_vertices_uw, num_vertices_pt,
-           num_vertices_pt);
-    assert(num_vertices_pr == num_vertices_ur && num_vertices_pw == num_vertices_uw &&
-           num_vertices_pt == num_vertices_pt);
+    //printf("%d %d %d %d %d %d\n", num_vertices_pr, num_vertices_ur, num_vertices_pw, num_vertices_uw, num_vertices_pt,num_vertices_pt);
+    //assert(num_vertices_pr == num_vertices_ur && num_vertices_pw == num_vertices_uw &&num_vertices_pt == num_vertices_pt);
 
     //vertex of region
     // emb_vertex_r = (real *)memalign(128,(long long)num_vertices_r * dim * sizeof(real));
@@ -669,16 +642,16 @@ void InitNegTable(int *&neg_table, int num_vertices, ClassVertex *vertex) {
 }
 
 void InitNeg() {
+
     InitNegTable(neg_table_pv, num_vertices_pv, vertex_pv);
     InitNegTable(neg_table_pr, num_vertices_pr, vertex_pr);
     InitNegTable(neg_table_pt, num_vertices_pt, vertex_pt);
-    InitNegTable(neg_table_pw, num_vertices_pw, vertex_pw);
+
 
     InitNegTable(neg_table_uv, num_vertices_uv, vertex_uv);
-    InitNegTable(neg_table_ur, num_vertices_ur, vertex_ur);
-    InitNegTable(neg_table_ut, num_vertices_ut, vertex_ut);
-    InitNegTable(neg_table_uw, num_vertices_uw, vertex_uw);
-    InitNegTable(neg_table_up, num_vertices_up, vertex_up);
+    InitNegTable(neg_table_ur, num_vertices_pr, vertex_ur);
+    InitNegTable(neg_table_ut, num_vertices_pt, vertex_ut);
+    InitNegTable(neg_table_up, num_vertices_pv, vertex_up);
 }
 
 /* Fastly compute sigmoid function */
@@ -705,12 +678,12 @@ int Rand(unsigned long long &seed) {
 }
 
 /* Update embeddings */
-void Update(real *vec_u, real *vec_v, real *vec_error, int label,int a) {
+void Update(real *vec_u, real *vec_v, real *vec_error, int label, int a) {
     real x = 0, g;
 
     for (int c = 0; c != dim; c++) x += vec_u[c] * vec_v[c];
     if (isnan(x)) {
-        std::cout << "错了 "<<a<<" " <<x<< std::endl;
+        std::cout << "错了 " << a << " failed" << x << std::endl;
 
     }
     g = (label - FastSigmoid(x)) * rho;
@@ -725,6 +698,22 @@ void *TrainLINEThread(long id) {
     int *neg_table, *edge_source_id, *edge_target_id;
     real *emb_vertex_target, *emb_context_target;
     real *vec_error = (real *) calloc(dim, sizeof(real));
+    //long long min_num_edge= std::min({num_edges_pr,num_edges_pw,num_edges_pt,num_edges_pv,num_edges_ur,num_edges_uw,num_edges_ut,num_edges_uv,num_edges_up});
+    //long long round=num_edges_pr/min_num_edge+num_edges_pt/min_num_edge+num_edges_pw/min_num_edge+num_edges_pv/min_num_edge+num_edges_ur/min_num_edge+num_edges_ut/min_num_edge+num_edges_uw/min_num_edge+num_edges_uv/min_num_edge+num_edges_up/min_num_edge;
+    //long long min_num_edge= std::min({num_edges_pr,num_edges_pw,num_edges_pt,num_edges_pv});
+    //long long round=num_edges_pr/min_num_edge+num_edges_pt/min_num_edge+num_edges_pw/min_num_edge+num_edges_pv/min_num_edge;
+    long long min_num_edge = std::min(
+            {num_edges_pr, num_edges_pt, num_edges_pv, num_edges_ur, num_edges_ut, num_edges_uv, num_edges_up});
+    long long round = num_edges_pr / min_num_edge + num_edges_pt / min_num_edge + num_edges_pv / min_num_edge +
+                      num_edges_ur / min_num_edge + num_edges_ut / min_num_edge + num_edges_uv / min_num_edge +
+                      num_edges_up / min_num_edge;
+    long long n1 = num_edges_pr / min_num_edge;
+    long long n2 = n1 + num_edges_pt / min_num_edge;
+    long long n3 = n2 + num_edges_pv / min_num_edge;
+    long long n4 = n3 + num_edges_ur / min_num_edge;
+    long long n5 = n4 + num_edges_ut / min_num_edge;
+    long long n6 = n5 + num_edges_uv / min_num_edge;
+
 
     while (1) {
         //judge for exit
@@ -739,7 +728,24 @@ void *TrainLINEThread(long id) {
             if (rho < init_rho * 0.0001) rho = init_rho * 0.0001;
         }
 
-        int a = count % 9;
+        int a;
+        int num = count % round;
+        if (num < n1) {
+            a = 0;
+        } else if (num < n2) {
+            a = 1;
+        } else if (num < n3) {
+            a = 2;
+        } else if (num < n4) {
+            a = 3;
+        } else if (num < n5) {
+            a = 4;
+        } else if (num < n6) {
+            a = 5;
+        } else {
+            a = 6;
+        }
+
         //std::cout<<a<<"\n";
 
 
@@ -751,6 +757,7 @@ void *TrainLINEThread(long id) {
                 emb_context_target = emb_vertex_p;
                 edge_source_id = pr_edge_source_id;
                 edge_target_id = pr_edge_target_id;
+
                 break;
 
             case 1:
@@ -762,14 +769,6 @@ void *TrainLINEThread(long id) {
                 edge_target_id = pt_edge_target_id;
                 break;
             case 2:
-                curedge = SampleAnEdge(uni(), uni(), num_edges_pw, alias_pw, prob_pw);
-                neg_table = neg_table_pw;
-                emb_vertex_target = emb_vertex_w;
-                emb_context_target = emb_vertex_p;
-                edge_source_id = pw_edge_source_id;
-                edge_target_id = pw_edge_target_id;
-                break;
-            case 3:
                 curedge = SampleAnEdge(uni(), uni(), num_edges_pv, alias_pv, prob_pv);
                 neg_table = neg_table_pv;
                 emb_vertex_target = emb_vertex_p;
@@ -777,7 +776,7 @@ void *TrainLINEThread(long id) {
                 edge_source_id = pv_edge_source_id;
                 edge_target_id = pv_edge_target_id;
                 break;
-            case 4:
+            case 3:
                 curedge = SampleAnEdge(uni(), uni(), num_edges_ur, alias_ur, prob_ur);
                 neg_table = neg_table_ur;
                 emb_vertex_target = emb_vertex_r;
@@ -785,8 +784,7 @@ void *TrainLINEThread(long id) {
                 edge_source_id = ur_edge_source_id;
                 edge_target_id = ur_edge_target_id;
                 break;
-
-            case 5:
+            case 4:
                 curedge = SampleAnEdge(uni(), uni(), num_edges_ut, alias_ut, prob_ut);
                 neg_table = neg_table_ut;
                 emb_vertex_target = emb_vertex_t;
@@ -794,15 +792,7 @@ void *TrainLINEThread(long id) {
                 edge_source_id = ut_edge_source_id;
                 edge_target_id = ut_edge_target_id;
                 break;
-            case 6:
-                curedge = SampleAnEdge(uni(), uni(), num_edges_uw, alias_uw, prob_uw);
-                neg_table = neg_table_uw;
-                emb_vertex_target = emb_vertex_w;
-                emb_context_target = emb_vertex_u;
-                edge_source_id = uw_edge_source_id;
-                edge_target_id = uw_edge_target_id;
-                break;
-            case 7:
+            case 5:
                 curedge = SampleAnEdge(uni(), uni(), num_edges_uv, alias_uv, prob_uv);
                 neg_table = neg_table_uv;
                 emb_vertex_target = emb_vertex_u;
@@ -818,6 +808,7 @@ void *TrainLINEThread(long id) {
                 edge_source_id = up_edge_source_id;
                 edge_target_id = up_edge_target_id;
                 break;
+
         }
 
         u = edge_source_id[curedge];
@@ -837,12 +828,13 @@ void *TrainLINEThread(long id) {
             }
             lv = target * dim;
 
-            Update(&emb_context_target[lu], &emb_vertex_target[lv], vec_error, label,a);
+            Update(&emb_context_target[lu], &emb_vertex_target[lv], vec_error, label, a);
 
         }
         for (int c = 0; c != dim; c++) emb_context_target[c + lu] += vec_error[c];
         count++;
     }
+
     free(vec_error);
     return NULL;
 }
@@ -866,7 +858,6 @@ void Output() {
     OutputFile(emb_poi, num_vertices_poi, vertex_pv, emb_vertex_p);
     OutputFile(emb_reg, num_vertices_pr, vertex_pr, emb_vertex_r);
     OutputFile(emb_time, num_vertices_pt, vertex_pt, emb_vertex_t);
-    OutputFile(emb_word, num_vertices_pw, vertex_pw, emb_vertex_w);
     OutputFile(emb_user, num_vertices_user, vertex_uv, emb_vertex_u);
 }
 
@@ -989,14 +980,11 @@ int main(int argc, char **argv) {
     vertex_pv = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
     vertex_pr = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
     vertex_pt = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
-    vertex_pw = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
+
 
     vertex_user = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
     vertex_uv = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
-    vertex_ur = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
-    vertex_ut = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
-    vertex_uw = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
-    vertex_up = (struct ClassVertex *) calloc(max_num_vertices, sizeof(struct ClassVertex));
+
 
     TrainLINE();
     return 0;
